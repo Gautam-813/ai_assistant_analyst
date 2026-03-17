@@ -29,6 +29,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Password protection
+def check_password():
+    """Check if password is correct and store in session state."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if not st.session_state.password_correct:
+        st.title("🔐 Authentication Required")
+        st.markdown("Enter the password to access the AI Quant Research Copilot dashboard.")
+        
+        password_input = st.text_input(
+            "Password",
+            type="password",
+            key="password_input",
+            placeholder="Enter password..."
+        )
+        
+        if st.button("Unlock Dashboard"):
+            stored_password = st.secrets.get("PASSWORD", "")
+            if password_input == stored_password:
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("Incorrect password. Please try again.")
+        return False
+    return True
+
+# Check password before showing dashboard
+if not check_password():
+    st.stop()
+
 
 @st.cache_data
 def load_asset_data(symbol: str):
@@ -66,7 +97,7 @@ def load_asset_data(symbol: str):
 
 
 @st.cache_data
-def get_available_models(gemini_key, groq_key=None, openrouter_key=None, bytez_key=None):
+def get_available_models(gemini_key, groq_key=None, openrouter_key=None, bytez_key=None, nvidia_key=None):
     models = []
 
     try:
@@ -106,6 +137,16 @@ def get_available_models(gemini_key, groq_key=None, openrouter_key=None, bytez_k
             ]
         )
 
+    # NVIDIA: add NVIDIA NIM models
+    if nvidia_key:
+        models.extend(
+            [
+                "nvidia/meta-llama/llama-3.1-405b-instruct",
+                "nvidia/meta-llama/llama-3.1-70b-instruct",
+                "nvidia/meta-llama/llama-3.2-3b-instruct",
+            ]
+        )
+
     models = sorted(set(models))
     return models
 
@@ -140,11 +181,13 @@ with st.sidebar.expander("🔑 AI API Keys", expanded=True):
     u_groq_key = st.text_input("Groq API Key", type="password")
     u_or_key = st.text_input("OpenRouter API Key", type="password")
     u_bytez_key = st.text_input("Bytez API Key", type="password")
+    u_nvidia_key = st.text_input("NVIDIA API Key", type="password")
 
     final_gemini_key = u_gemini_key or st.secrets.get("GEMINI_API_KEY", "")
     final_groq_key = u_groq_key or st.secrets.get("GROQ_API_KEY", "")
     final_or_key = u_or_key or st.secrets.get("OPEN_ROUTER", "")
     final_bytez_key = u_bytez_key or st.secrets.get("Bytez", "")
+    final_nvidia_key = u_nvidia_key or st.secrets.get("NVIDIA_API_KEY", "")
 
     if final_gemini_key:
         st.success("Gemini: Connected")
@@ -154,6 +197,8 @@ with st.sidebar.expander("🔑 AI API Keys", expanded=True):
         st.success("OpenRouter: Connected")
     if final_bytez_key:
         st.success("Bytez: Connected")
+    if final_nvidia_key:
+        st.success("NVIDIA: Connected")
 
 st.sidebar.subheader("📊 Data Window")
 max_days = st.sidebar.slider("Use last N days of data", 30, 365, 180, step=15)
@@ -224,13 +269,13 @@ with st.expander("📁 Data overview", expanded=False):
 
 
 # Guard: require at least one provider
-if not (final_gemini_key or final_groq_key or final_or_key or final_bytez_key):
-    st.warning("Provide at least one API key (Gemini, Groq, OpenRouter, or Bytez) in the sidebar to use the AI.")
+if not (final_gemini_key or final_groq_key or final_or_key or final_bytez_key or final_nvidia_key):
+    st.warning("Provide at least one API key (Gemini, Groq, OpenRouter, Bytez, or NVIDIA) in the sidebar to use the AI.")
     st.stop()
 
 
 # Resolve models
-available_models = get_available_models(final_gemini_key, final_groq_key, final_or_key, final_bytez_key)
+available_models = get_available_models(final_gemini_key, final_groq_key, final_or_key, final_bytez_key, final_nvidia_key)
 if not available_models:
     st.error("No models available. Check your API keys.")
     st.stop()
@@ -250,6 +295,8 @@ with c_ai1:
         provider = "OpenRouter"
     elif sel_model_name.startswith("bytez"):
         provider = "Bytez"
+    elif sel_model_name.startswith("nvidia"):
+        provider = "NVIDIA"
     else:
         provider = "Google Gemini"
     st.caption(f"Provider: {provider}")
@@ -488,6 +535,48 @@ Requirements:
                             gen_text = json.dumps(output)
                         # Bytez docs don't yet expose token usage in this endpoint
                         usage_text = "Bytez usage: not reported"
+                    elif sel_model_name.startswith("nvidia"):
+                        # NVIDIA NIM API
+                        nvidia_model = sel_model_name.replace("nvidia/", "")
+                        headers = {
+                            "Authorization": f"Bearer {final_nvidia_key}",
+                            "Content-Type": "application/json",
+                        }
+                        payload = {
+                            "model": nvidia_model,
+                            "messages": [{"role": "user", "content": prompt_to_send}],
+                            "max_tokens": 4096,
+                            "temperature": 0.3,
+                        }
+                        response = requests.post(
+                            "https://integrate.api.nvidia.com/v1/chat/completions",
+                            headers=headers,
+                            data=json.dumps(payload),
+                        )
+                        res_json = response.json()
+                        if "choices" not in res_json:
+                            raise ValueError(
+                                f"NVIDIA Error: {res_json.get('error', 'Unknown Error')}"
+                            )
+                        gen_text = res_json["choices"][0]["message"]["content"].strip()
+                        usage = res_json.get(
+                            "usage",
+                            {
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                                "total_tokens": 0,
+                            },
+                        )
+                        st.session_state.total_input_tokens += usage["prompt_tokens"]
+                        st.session_state.total_output_tokens += usage[
+                            "completion_tokens"
+                        ]
+                        st.session_state.total_cost += (
+                            usage["total_tokens"] / 1_000_000
+                        ) * 0.10
+                        usage_text = (
+                            f"Input: {usage['prompt_tokens']} | Output: {usage['completion_tokens']}"
+                        )
                     else:
                         genai.configure(api_key=final_gemini_key)
                         model = genai.GenerativeModel(sel_model_name)
