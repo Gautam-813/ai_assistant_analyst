@@ -17,3 +17,6 @@ before adding the multiple data for symbols.zip
 
 # Keep main data ignored by default BUT we will force-add the ones we want
 *.parquet
+!XAUUSD_M1_Data.parquet
+!DXY_M1_Data.parquet
+!EURUSD_M1_Data.parquet
