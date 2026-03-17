@@ -1,0 +1,19 @@
+# Streamlit & Secrets (avoid uploading entire folder and keys)
+.streamlit/
+.secrets.toml
+secrets.toml
+.gemini/
+
+# Python & Junk
+__pycache__/
+*.pyc
+*.zip
+*.csv
+
+# Data Protection (large/raw files - avoid uploading)
+OLD_XAUUSD_M1_Data.parquet
+XAUUSD_M1_Data_merged.csv
+before adding the multiple data for symbols.zip
+
+# Keep main data ignored by default BUT we will force-add the ones we want
+*.parquet
